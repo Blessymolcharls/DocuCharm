@@ -4,6 +4,9 @@ backend/temp/uploads/*
 backend/temp/outputs/*
 !backend/temp/uploads/.gitkeep
 !backend/temp/outputs/.gitkeep
+**/.env
+**/.env.*
+!**/.env.example
 
 # Flutter
 frontend/.dart_tool/
