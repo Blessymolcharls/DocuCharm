@@ -1,0 +1,23 @@
+# Node
+backend/node_modules/
+backend/temp/uploads/*
+backend/temp/outputs/*
+!backend/temp/uploads/.gitkeep
+!backend/temp/outputs/.gitkeep
+
+# Flutter
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/build/
+frontend/.idea/
+frontend/.metadata
+frontend/ios/Pods/
+frontend/android/.gradle/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
