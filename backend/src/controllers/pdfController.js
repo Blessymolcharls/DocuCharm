@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const {
   mergePdfs,
   splitPdf,
@@ -27,12 +28,48 @@ function ensureFiles(files, minCount = 1) {
   }
 }
 
-function ensurePdfFiles(files) {
-  const invalid = (files || []).find((file) => {
+async function isPdfBySignature(filePath) {
+  if (!filePath) {
+    return false;
+  }
+
+  try {
+    const handle = await fs.promises.open(filePath, "r");
+    try {
+      const headerBuffer = Buffer.alloc(5);
+      await handle.read(headerBuffer, 0, 5, 0);
+      return headerBuffer.toString("utf8") === "%PDF-";
+    } finally {
+      await handle.close();
+    }
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function ensurePdfFiles(files) {
+  const allowedMimes = new Set([
+    "application/pdf",
+    "application/x-pdf",
+    "application/acrobat",
+    "application/vnd.pdf",
+    "text/pdf",
+  ]);
+
+  let invalid;
+
+  for (const file of files || []) {
     const name = file.originalname?.toLowerCase() || "";
     const mime = file.mimetype?.toLowerCase() || "";
-    return !name.endsWith(".pdf") && mime !== "application/pdf";
-  });
+    const hasPdfExtension = name.endsWith(".pdf");
+    const hasPdfMime = allowedMimes.has(mime);
+    const hasPdfSignature = await isPdfBySignature(file.path);
+
+    if (!hasPdfExtension && !hasPdfMime && !hasPdfSignature) {
+      invalid = file;
+      break;
+    }
+  }
 
   if (invalid) {
     const error = new Error("Only PDF files are allowed for this operation.");
@@ -64,7 +101,7 @@ async function merge(req, res, next) {
 
   try {
     ensureFiles(req.files, 2);
-    ensurePdfFiles(req.files);
+    await ensurePdfFiles(req.files);
     const outputPath = await mergePdfs(uploadedPaths);
     res.status(200).json({ message: "PDFs merged successfully", ...buildPublicFileInfo(req, outputPath) });
   } catch (error) {
@@ -79,7 +116,7 @@ async function split(req, res, next) {
 
   try {
     ensureFiles(uploadedPath ? [req.file] : [], 1);
-    ensurePdfFiles(uploadedPath ? [req.file] : []);
+    await ensurePdfFiles(uploadedPath ? [req.file] : []);
     const pagePdfs = await splitPdf(uploadedPath);
     const zipPath = await zipFiles(pagePdfs);
     await removeFiles(pagePdfs);
@@ -113,7 +150,7 @@ async function pdfToImagesController(req, res, next) {
 
   try {
     ensureFiles(uploadedPath ? [req.file] : [], 1);
-    ensurePdfFiles(uploadedPath ? [req.file] : []);
+    await ensurePdfFiles(uploadedPath ? [req.file] : []);
     const imagePaths = await pdfToImages(uploadedPath);
     const zipPath = await zipFiles(imagePaths);
     await removeFiles(imagePaths);
@@ -130,7 +167,7 @@ async function rotate(req, res, next) {
 
   try {
     ensureFiles(uploadedPath ? [req.file] : [], 1);
-    ensurePdfFiles(uploadedPath ? [req.file] : []);
+    await ensurePdfFiles(uploadedPath ? [req.file] : []);
     const requestedAngle = Number.parseInt(req.body.angle, 10);
     const angle = Number.isNaN(requestedAngle) ? 90 : requestedAngle;
 

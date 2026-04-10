@@ -5,9 +5,28 @@ import "package:docucharm_frontend/features/processor/domain/tool_type.dart";
 import "package:docucharm_frontend/features/viewer/presentation/pdf_viewer_screen.dart";
 import "package:desktop_drop/desktop_drop.dart";
 import "package:file_picker/file_picker.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:open_filex/open_filex.dart";
 import "package:share_plus/share_plus.dart";
+import "package:url_launcher/url_launcher.dart";
+
+class _SelectedInputFile {
+  final String name;
+  final String? path;
+  final Uint8List? bytes;
+
+  const _SelectedInputFile({
+    required this.name,
+    this.path,
+    this.bytes,
+  });
+
+  bool get isImage {
+    final lower = name.toLowerCase();
+    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png");
+  }
+}
 
 class ProcessorScreen extends StatefulWidget {
   const ProcessorScreen({super.key, required this.tool});
@@ -20,7 +39,7 @@ class ProcessorScreen extends StatefulWidget {
 
 class _ProcessorScreenState extends State<ProcessorScreen> {
   final PdfApiClient _apiClient = PdfApiClient();
-  final List<File> _selectedFiles = [];
+  final List<_SelectedInputFile> _selectedFiles = [];
 
   bool _isProcessing = false;
   bool _isDownloading = false;
@@ -37,16 +56,39 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
       allowMultiple: widget.tool.allowsMultipleFiles,
       type: FileType.custom,
       allowedExtensions: widget.tool.expectsPdfInput ? ["pdf"] : ["jpg", "jpeg", "png"],
+      withData: kIsWeb,
     );
 
     if (result == null || result.files.isEmpty) {
       return;
     }
 
+    final accepted = result.files
+        .where((item) => _matchesExpectedType(item.name))
+        .map(
+          (item) => kIsWeb
+              ? _SelectedInputFile(
+                  name: item.name,
+                  bytes: item.bytes,
+                )
+              : _SelectedInputFile(
+                  name: item.name,
+                  path: item.path,
+                  bytes: item.bytes,
+                ),
+        )
+        .where((item) => (item.path != null && item.path!.isNotEmpty) || item.bytes != null)
+        .toList();
+
+    if (accepted.isEmpty) {
+      _showMessage("Picked files did not match expected type.", isError: true);
+      return;
+    }
+
     setState(() {
       _selectedFiles
         ..clear()
-        ..addAll(result.paths.whereType<String>().map(File.new));
+        ..addAll(accepted);
       _outputFile = null;
       _downloadUrl = null;
       _outputName = null;
@@ -68,7 +110,15 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
     try {
       final result = await _apiClient.processFiles(
         tool: widget.tool,
-        files: _selectedFiles,
+        files: _selectedFiles
+            .map(
+              (file) => UploadInputFile(
+                fileName: file.name,
+                filePath: file.path,
+                bytes: file.bytes,
+              ),
+            )
+            .toList(),
         rotateAngle: _rotateAngle,
         onProgress: (value) {
           if (mounted) {
@@ -98,6 +148,16 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
   Future<void> _downloadFile() async {
     if (_downloadUrl == null || _outputName == null) {
       _showMessage("Process files first.", isError: true);
+      return;
+    }
+
+    if (kIsWeb) {
+      final opened = await launchUrl(Uri.parse(_downloadUrl!));
+      if (!opened) {
+        _showMessage("Could not start browser download.", isError: true);
+        return;
+      }
+      _showMessage("Download started in browser.");
       return;
     }
 
@@ -176,10 +236,8 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: _selectedFiles.map((file) {
-        final fileName = file.path.split(Platform.pathSeparator).last;
-        final isImage = fileName.toLowerCase().endsWith(".jpg") ||
-            fileName.toLowerCase().endsWith(".jpeg") ||
-            fileName.toLowerCase().endsWith(".png");
+        final fileName = file.name;
+        final isImage = file.isImage;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
@@ -193,7 +251,15 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
               if (isImage)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.file(file, width: 46, height: 46, fit: BoxFit.cover),
+                  child: file.bytes != null
+                      ? Image.memory(file.bytes!, width: 46, height: 46, fit: BoxFit.cover)
+                      : file.path != null
+                          ? Image.file(File(file.path!), width: 46, height: 46, fit: BoxFit.cover)
+                          : Container(
+                              width: 46,
+                              height: 46,
+                              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                            ),
                 )
               else
                 Container(
@@ -225,17 +291,29 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
       return;
     }
 
-    final accepted = <File>[];
+    final accepted = <_SelectedInputFile>[];
 
     for (final file in files) {
-      final path = file.path.toLowerCase();
-      if (widget.tool.expectsPdfInput && path.endsWith(".pdf")) {
-        accepted.add(File(file.path));
+      if (!_matchesExpectedType(file.name)) {
+        continue;
       }
-      if (!widget.tool.expectsPdfInput &&
-          (path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".png"))) {
-        accepted.add(File(file.path));
+
+      Uint8List? bytes;
+      String? path;
+
+      if (kIsWeb) {
+        bytes = await file.readAsBytes();
+      } else {
+        path = file.path;
       }
+
+      accepted.add(
+        _SelectedInputFile(
+          name: file.name,
+          path: path,
+          bytes: bytes,
+        ),
+      );
     }
 
     if (accepted.isEmpty) {
@@ -257,6 +335,16 @@ class _ProcessorScreenState extends State<ProcessorScreen> {
       _downloadUrl = null;
       _outputName = null;
     });
+  }
+
+  bool _matchesExpectedType(String fileName) {
+    final lower = fileName.toLowerCase();
+
+    if (widget.tool.expectsPdfInput) {
+      return lower.endsWith(".pdf");
+    }
+
+    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png");
   }
 
   @override

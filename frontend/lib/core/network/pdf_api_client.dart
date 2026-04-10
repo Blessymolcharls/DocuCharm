@@ -5,6 +5,18 @@ import "package:docucharm_frontend/core/constants/api_constants.dart";
 import "package:docucharm_frontend/features/processor/domain/tool_type.dart";
 import "package:path_provider/path_provider.dart";
 
+class UploadInputFile {
+  final String fileName;
+  final String? filePath;
+  final List<int>? bytes;
+
+  const UploadInputFile({
+    required this.fileName,
+    this.filePath,
+    this.bytes,
+  });
+}
+
 class ProcessResult {
   final String fileName;
   final String downloadUrl;
@@ -19,7 +31,7 @@ class PdfApiClient {
 
   Future<ProcessResult> processFiles({
     required ToolType tool,
-    required List<File> files,
+    required List<UploadInputFile> files,
     int? rotateAngle,
     required void Function(double progress) onProgress,
   }) async {
@@ -30,7 +42,7 @@ class PdfApiClient {
         formData.files.add(
           MapEntry(
             "files",
-            await MultipartFile.fromFile(file.path, filename: file.uri.pathSegments.last),
+            await _toMultipartFile(file),
           ),
         );
       }
@@ -38,7 +50,7 @@ class PdfApiClient {
       formData.files.add(
         MapEntry(
           "file",
-          await MultipartFile.fromFile(files.first.path, filename: files.first.uri.pathSegments.last),
+          await _toMultipartFile(files.first),
         ),
       );
     }
@@ -83,5 +95,17 @@ class PdfApiClient {
     );
 
     return outputFile;
+  }
+
+  Future<MultipartFile> _toMultipartFile(UploadInputFile file) async {
+    if (file.filePath != null && file.filePath!.isNotEmpty) {
+      return MultipartFile.fromFile(file.filePath!, filename: file.fileName);
+    }
+
+    if (file.bytes != null) {
+      return MultipartFile.fromBytes(file.bytes!, filename: file.fileName);
+    }
+
+    throw UnsupportedError("Selected file has no readable path or bytes.");
   }
 }
